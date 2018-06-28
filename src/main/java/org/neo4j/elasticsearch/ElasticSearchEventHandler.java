@@ -4,17 +4,15 @@ import io.searchbox.action.BulkableAction;
 import io.searchbox.client.JestClient;
 import io.searchbox.client.JestResult;
 import io.searchbox.client.JestResultHandler;
-import io.searchbox.core.Bulk;
-import io.searchbox.core.Delete;
-import io.searchbox.core.Index;
-import io.searchbox.core.Update;
-import org.neo4j.graphdb.GraphDatabaseService;
+import io.searchbox.core.*;
 import org.neo4j.graphdb.Label;
 import org.neo4j.graphdb.Node;
 import org.neo4j.graphdb.event.LabelEntry;
 import org.neo4j.graphdb.event.PropertyEntry;
 import org.neo4j.graphdb.event.TransactionData;
 import org.neo4j.graphdb.event.TransactionEventHandler;
+import org.neo4j.graphdb.NotFoundException;
+
 
 import java.util.*;
 import java.util.logging.Level;
@@ -42,26 +40,20 @@ class ElasticSearchEventHandler implements TransactionEventHandler<Collection<Bu
         Map<IndexId, BulkableAction> actions = new HashMap<>(1000);
 
         for (Node node : transactionData.createdNodes()) {
-            if (hasLabel(node)) actions.putAll(indexRequests(node));
+            actions.putAll(indexRequests(node));
         }
-        for (LabelEntry labelEntry : transactionData.assignedLabels()) {
-            if (hasLabel(labelEntry)) {
-                if (transactionData.isDeleted(labelEntry.node())) {
-                    actions.putAll(deleteRequests(labelEntry.node()));
-                } else {
-                    actions.putAll(indexRequests(labelEntry.node()));
-                }
-            }
-        }
+
         for (LabelEntry labelEntry : transactionData.removedLabels()) {
-            if (hasLabel(labelEntry)) actions.putAll(deleteRequests(labelEntry.node(), labelEntry.label()));
+            actions.putAll(deleteRequests(labelEntry.node(), labelEntry.label()));
         }
+
+
         for (PropertyEntry<Node> propEntry : transactionData.assignedNodeProperties()) {
-            if (hasLabel(propEntry))
-                actions.putAll(indexRequests(propEntry.entity()));
+            actions.putAll(indexRequests(propEntry.entity()));
         }
+
         for (PropertyEntry<Node> propEntry : transactionData.removedNodeProperties()) {
-            if (!transactionData.isDeleted(propEntry.entity()) && hasLabel(propEntry))
+            if (!transactionData.isDeleted(propEntry.entity()))
                 actions.putAll(updateRequests(propEntry.entity()));
         }
         return actions.isEmpty() ? Collections.<BulkableAction>emptyList() : actions.values();
@@ -73,7 +65,10 @@ class ElasticSearchEventHandler implements TransactionEventHandler<Collection<Bu
 
     @Override
     public void afterCommit(TransactionData transactionData, Collection<BulkableAction> actions) {
-        if (actions.isEmpty()) return;
+        if (actions.isEmpty()) {
+            
+            return;
+        }
         try {
             Bulk bulk = new Bulk.Builder()
                     .addAction(actions).build();
@@ -88,115 +83,61 @@ class ElasticSearchEventHandler implements TransactionEventHandler<Collection<Bu
         }
     }
 
-    private boolean hasLabel(Node node) {
-        for (Label l: node.getLabels()) {
-            if (indexLabels.contains(l.name())) return true;
-        }
-        return false;
-    }
 
-    private boolean hasLabel(LabelEntry labelEntry) {
-        return indexLabels.contains(labelEntry.label().name());
-    }
-
-    private boolean hasLabel(PropertyEntry<Node> propEntry) {
-        return hasLabel(propEntry.entity());
-    }
-    
     private Map<IndexId, Index> indexRequests(Node node) {
         HashMap<IndexId, Index> reqs = new HashMap<>();
-
         for (Label l: node.getLabels()) {
-            if (!indexLabels.contains(l.name())) continue;
-
-            for (ElasticSearchIndexSpec spec: indexSettings.getIndexSpec().get(l.name())) {
-                String id = id(node), indexName = spec.getIndexName();
-                reqs.put(new IndexId(indexName, id), new Index.Builder(nodeToJson(node, spec.getProperties()))
-                .type(l.name())
-                .index(indexName)
-                .id(id)
-                .build());
-            }
+            String id = id(node), indexName = l.name().toLowerCase();
+            reqs.put(new IndexId(indexName, id), new Index.Builder(nodeToJson(node))
+                    .index(indexName)
+                    .type(indexName+"Sync")
+                    .id(id)
+                    .build());
         }
         return reqs;
     }
 
-    private Map<IndexId, Delete> deleteRequests(Node node) {
-        HashMap<IndexId, Delete> reqs = new HashMap<>();
-
-    	for (Label l: node.getLabels()) {
-    		if (!indexLabels.contains(l.name())) continue;
-    		for (ElasticSearchIndexSpec spec: indexSettings.getIndexSpec().get(l.name())) {
-    		    String id = id(node), indexName = spec.getIndexName();
-    			reqs.put(new IndexId(indexName, id),
-    			         new Delete.Builder(id).index(indexName).build());
-    		}
-    	}
-    	return reqs;
-    }
-    
     private Map<IndexId, Delete> deleteRequests(Node node, Label label) {
         HashMap<IndexId, Delete> reqs = new HashMap<>();
 
-        if (indexLabels.contains(label.name())) {
-            for (ElasticSearchIndexSpec spec: indexSettings.getIndexSpec().get(label.name())) {
-                String id = id(node), indexName = spec.getIndexName();
-                reqs.put(new IndexId(indexName, id),
-                         new Delete.Builder(id)
-                                   .index(indexName)
-                                   .type(label.name())
-                                   .build());
-            }
-        }
-        return reqs;
+        String id = id(node), indexName = label.name().toLowerCase();
+        reqs.put(new IndexId(label.name().toLowerCase(), id),
+                 new Delete.Builder(id).index(indexName).build());
+    	return reqs;
     }
     
     private Map<IndexId, Update> updateRequests(Node node) {
     	HashMap<IndexId, Update> reqs = new HashMap<>();
     	for (Label l: node.getLabels()) {
-    		if (!indexLabels.contains(l.name())) continue;
+            String id = id(node), indexName = l.name().toLowerCase();
+            reqs.put(new IndexId(indexName, id),
+                    new Update.Builder(nodeToJson(node))
+                              .type(l.name()+"Sync")
+                              .index(indexName)
+                              .id(id)
+                              .build());
 
-    		for (ElasticSearchIndexSpec spec: indexSettings.getIndexSpec().get(l.name())) {
-    		    String id = id(node), indexName = spec.getIndexName();
-    			reqs.put(new IndexId(indexName, id),
-    			        new Update.Builder(nodeToJson(node, spec.getProperties()))
-                    			  .type(l.name())
-                    			  .index(spec.getIndexName())
-                    			  .id(id(node))
-                    			  .build());
-    		}
     	}
     	return reqs;
     }
 
     private String id(Node node) {
-        return String.valueOf(node.getId());
+        try {
+            Object value = node.getProperty("sketchID");
+            return (String)(value);
+        } catch (NotFoundException ex) {
+            return String.valueOf(node.getId());
+        }
     }
 
-    private Map nodeToJson(Node node, Set<String> properties) {
-        Map<String,Object> json = new LinkedHashMap<>();
+    private Map nodeToJson(Node node) {
+        Map<String, Object> json = new LinkedHashMap<>();
         
-        if(indexSettings.getIncludeIDField()) 
-        	json.put("id", id(node));
-        
-        if(indexSettings.getIncludeLabelsField()) 
-        	json.put("labels", labels(node));
-
-        for (String prop : properties) {
-            if(node.hasProperty(prop)){
-                Object value = node.getProperty(prop);
-                json.put(prop, value);
-            }
+        for (Map.Entry<String, Object> entry : node.getAllProperties().entrySet()) {
+            json.put(entry.getKey(), entry.getValue());
         }
+        
         return json;
-    }
-    
-    private String[] labels(Node node) {
-        List<String> result=new ArrayList<>();
-        for (Label label : node.getLabels()) {
-            result.add(label.name());
-        }
-        return result.toArray(new String[result.size()]);
     }
 
     @Override

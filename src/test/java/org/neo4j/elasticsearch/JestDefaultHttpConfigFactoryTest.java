@@ -10,15 +10,16 @@ import static org.junit.Assert.*;
 
 public class JestDefaultHttpConfigFactoryTest {
   private static HttpClientConfig subject;
+  private String serverUri = "http://10.201.50.36:9200";
 
   @Before
   public void beforeEach() throws Throwable {
-    subject = JestDefaultHttpConfigFactory.getConfigFor("http://localhost:9200", true);
+    subject = JestDefaultHttpConfigFactory.getConfigFor(serverUri, true);
   }
 
   @Test
   public void itHasTheCorrectHostName() {
-    Set<String> expected = new HashSet<String>(Arrays.asList("http://localhost:9200"));
+    Set<String> expected = new HashSet<String>(Arrays.asList(serverUri));
     assertEquals(expected, subject.getServerList());
   }
 
