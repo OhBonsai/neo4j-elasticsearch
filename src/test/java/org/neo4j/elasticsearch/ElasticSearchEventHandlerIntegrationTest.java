@@ -67,8 +67,9 @@ public class ElasticSearchEventHandlerIntegrationTest {
     public void testAfterCommit() throws Exception {
         Transaction tx = db.beginTx();
         org.neo4j.graphdb.Node node = db.createNode(Label.label(LABEL));
-        String id = String.valueOf(node.getId());
         node.setProperty("foo", "foobar");
+        node.setProperty("sketchID", 1000001);
+        String id = String.valueOf(node.getProperty("sketchID"));
         tx.success();
         tx.close();
 

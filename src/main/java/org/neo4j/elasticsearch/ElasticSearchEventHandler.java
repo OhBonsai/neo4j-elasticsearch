@@ -40,6 +40,7 @@ class ElasticSearchEventHandler implements TransactionEventHandler<Collection<Bu
         Map<IndexId, BulkableAction> actions = new HashMap<>(1000);
 
         for (Node node : transactionData.createdNodes()) {
+            System.out.println("OOOOOOOOOOOOO-----------> " + "Create node before commit");
             actions.putAll(indexRequests(node));
         }
 
@@ -66,7 +67,7 @@ class ElasticSearchEventHandler implements TransactionEventHandler<Collection<Bu
     @Override
     public void afterCommit(TransactionData transactionData, Collection<BulkableAction> actions) {
         if (actions.isEmpty()) {
-            
+            System.out.println("OOOOOOOOOOOOO-----------> " + "4");
             return;
         }
         try {
@@ -74,8 +75,10 @@ class ElasticSearchEventHandler implements TransactionEventHandler<Collection<Bu
                     .addAction(actions).build();
             if (useAsyncJest) {
                 client.executeAsync(bulk, this);
+                System.out.println("OOOOOOOOOOOOO-----------> " + "5");
             }
             else {
+                System.out.println("OOOOOOOOOOOOO-----------> " + "6");
                 client.execute(bulk);
             }
         } catch (Exception e) {
@@ -86,6 +89,7 @@ class ElasticSearchEventHandler implements TransactionEventHandler<Collection<Bu
 
     private Map<IndexId, Index> indexRequests(Node node) {
         HashMap<IndexId, Index> reqs = new HashMap<>();
+        System.out.println("OOOOOOOOOOOOO-----------> " + "2");
         for (Label l: node.getLabels()) {
             String id = id(node), indexName = l.name().toLowerCase();
             reqs.put(new IndexId(indexName, id), new Index.Builder(nodeToJson(node))
@@ -94,6 +98,7 @@ class ElasticSearchEventHandler implements TransactionEventHandler<Collection<Bu
                     .id(id)
                     .build());
         }
+        System.out.println("OOOOOOOOOOOOO-----------> " + "3");
         return reqs;
     }
 
@@ -123,9 +128,13 @@ class ElasticSearchEventHandler implements TransactionEventHandler<Collection<Bu
 
     private String id(Node node) {
         try {
-            Object value = node.getProperty("sketchID");
-            return (String)(value);
-        } catch (NotFoundException ex) {
+            System.out.println("OOOOOOOOOOOOO-----------> " + "2.1");
+            String value = String.valueOf(node.getProperty("sketchID"));
+            System.out.println(value);
+            return value;
+        }catch (Exception e){
+            System.out.println("OOOOOOOOOOOOO-----------> " + "2.3");
+            e.printStackTrace();
             return String.valueOf(node.getId());
         }
     }
