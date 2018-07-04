@@ -79,5 +79,10 @@
             <type>test-jar</type>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>com.graphaware.neo4j</groupId>
+            <artifactId>tx-api</artifactId>
+            <version>3.4.0.52</version>
+        </dependency>
     </dependencies>
 </project>

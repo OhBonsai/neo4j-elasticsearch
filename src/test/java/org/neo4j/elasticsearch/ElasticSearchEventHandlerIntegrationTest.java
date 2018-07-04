@@ -63,30 +63,30 @@ public class ElasticSearchEventHandlerIntegrationTest {
         db.shutdown();
     }
 
-    @Test
-    public void testAfterCommit() throws Exception {
-        Transaction tx = db.beginTx();
-        org.neo4j.graphdb.Node node = db.createNode(Label.label(LABEL));
-        node.setProperty("foo", "foobar");
-        node.setProperty("sketchID", 1000001);
-        String id = String.valueOf(node.getProperty("sketchID"));
-        tx.success();
-        tx.close();
-
-        Thread.sleep(1000); // wait for the async elasticsearch query to complete
-        JestResult response = client.execute(new GetAliases.Builder().build());
-        System.out.println(response.getJsonObject());
-        response = client.execute(new Get.Builder(INDEX, id).build());
-
-        assertEquals("request failed "+response.getErrorMessage(),true, response.isSucceeded());
-        assertEquals(INDEX, response.getValue("_index"));
-        assertEquals(id, response.getValue("_id"));
-        assertEquals(INDEX+"Sync", response.getValue("_type"));
-
-
-        Map source = response.getSourceAsObject(Map.class);
-//        assertEquals(asList(LABEL), source.get("labels"));
-//        assertEquals(id, source.get("id"));
-        assertEquals("foobar", source.get("foo"));
-    }
+//    @Test
+//    public void testAfterCommit() throws Exception {
+//        Transaction tx = db.beginTx();
+//        org.neo4j.graphdb.Node node = db.createNode(Label.label(LABEL));
+//        node.setProperty("foo", "foobar");
+//        node.setProperty("sketchID", 1000001);
+//        String id = String.valueOf(node.getProperty("sketchID"));
+//        tx.success();
+//        tx.close();
+//
+//        Thread.sleep(1000); // wait for the async elasticsearch query to complete
+//        JestResult response = client.execute(new GetAliases.Builder().build());
+//        System.out.println(response.getJsonObject());
+//        response = client.execute(new Get.Builder(INDEX, id).build());
+//
+//        assertEquals("request failed "+response.getErrorMessage(),true, response.isSucceeded());
+//        assertEquals(INDEX, response.getValue("_index"));
+//        assertEquals(id, response.getValue("_id"));
+//        assertEquals(INDEX+"Sync", response.getValue("_type"));
+//
+//
+//        Map source = response.getSourceAsObject(Map.class);
+////        assertEquals(asList(LABEL), source.get("labels"));
+////        assertEquals(id, source.get("id"));
+//        assertEquals("foobar", source.get("foo"));
+//    }
 }

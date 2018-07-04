@@ -1,5 +1,7 @@
 package org.neo4j.elasticsearch;
 
+import com.graphaware.tx.event.improved.api.ImprovedTransactionData;
+import com.graphaware.tx.event.improved.api.LazyTransactionData;
 import io.searchbox.action.BulkableAction;
 import io.searchbox.client.JestClient;
 import io.searchbox.client.JestResult;
@@ -12,6 +14,7 @@ import org.neo4j.graphdb.event.PropertyEntry;
 import org.neo4j.graphdb.event.TransactionData;
 import org.neo4j.graphdb.event.TransactionEventHandler;
 import org.neo4j.graphdb.NotFoundException;
+import org.neo4j.register.Register;
 
 
 import java.util.*;
@@ -37,26 +40,29 @@ class ElasticSearchEventHandler implements TransactionEventHandler<Collection<Bu
 
     @Override
     public Collection<BulkableAction> beforeCommit(TransactionData transactionData) throws Exception {
+        ImprovedTransactionData improvedTransactionData = new LazyTransactionData(transactionData);
+
         Map<IndexId, BulkableAction> actions = new HashMap<>(1000);
 
-        for (Node node : transactionData.createdNodes()) {
-            System.out.println("OOOOOOOOOOOOO-----------> " + "Create node before commit");
-            actions.putAll(indexRequests(node));
+        for (Node createNode : transactionData.createdNodes()) {
+            actions.putAll(indexRequests(createNode));
         }
 
-        for (LabelEntry labelEntry : transactionData.removedLabels()) {
-            actions.putAll(deleteRequests(labelEntry.node(), labelEntry.label()));
+
+        for (PropertyEntry<Node> propEntry : transactionData.removedNodeProperties()) {
+            if (!transactionData.isDeleted(propEntry.entity())){
+                actions.putAll(updateRequests(propEntry.entity()));
+            }
         }
 
+        for (Node deleteNode : improvedTransactionData.getAllDeletedNodes()) {
+            actions.putAll(deleteRequests(deleteNode));
+        }
 
         for (PropertyEntry<Node> propEntry : transactionData.assignedNodeProperties()) {
             actions.putAll(indexRequests(propEntry.entity()));
         }
 
-        for (PropertyEntry<Node> propEntry : transactionData.removedNodeProperties()) {
-            if (!transactionData.isDeleted(propEntry.entity()))
-                actions.putAll(updateRequests(propEntry.entity()));
-        }
         return actions.isEmpty() ? Collections.<BulkableAction>emptyList() : actions.values();
     }
 
@@ -67,7 +73,7 @@ class ElasticSearchEventHandler implements TransactionEventHandler<Collection<Bu
     @Override
     public void afterCommit(TransactionData transactionData, Collection<BulkableAction> actions) {
         if (actions.isEmpty()) {
-            System.out.println("OOOOOOOOOOOOO-----------> " + "4");
+            
             return;
         }
         try {
@@ -75,11 +81,11 @@ class ElasticSearchEventHandler implements TransactionEventHandler<Collection<Bu
                     .addAction(actions).build();
             if (useAsyncJest) {
                 client.executeAsync(bulk, this);
-                System.out.println("OOOOOOOOOOOOO-----------> " + "5");
             }
             else {
-                System.out.println("OOOOOOOOOOOOO-----------> " + "6");
-                client.execute(bulk);
+                JestResult reponse = client.execute(bulk);
+                System.out.println(reponse.getErrorMessage());
+                System.out.println(reponse.getJsonObject());
             }
         } catch (Exception e) {
             logger.log(Level.WARNING, "Error updating ElasticSearch ", e);
@@ -89,26 +95,52 @@ class ElasticSearchEventHandler implements TransactionEventHandler<Collection<Bu
 
     private Map<IndexId, Index> indexRequests(Node node) {
         HashMap<IndexId, Index> reqs = new HashMap<>();
-        System.out.println("OOOOOOOOOOOOO-----------> " + "2");
+        
         for (Label l: node.getLabels()) {
-            String id = id(node), indexName = l.name().toLowerCase();
+            String id = id(node);
+            String indexName = l.name().toLowerCase();
             reqs.put(new IndexId(indexName, id), new Index.Builder(nodeToJson(node))
                     .index(indexName)
                     .type(indexName+"Sync")
                     .id(id)
                     .build());
         }
-        System.out.println("OOOOOOOOOOOOO-----------> " + "3");
+        
         return reqs;
     }
 
     private Map<IndexId, Delete> deleteRequests(Node node, Label label) {
         HashMap<IndexId, Delete> reqs = new HashMap<>();
-
+        
         String id = id(node), indexName = label.name().toLowerCase();
-        reqs.put(new IndexId(label.name().toLowerCase(), id),
-                 new Delete.Builder(id).index(indexName).build());
+        reqs.put(new IndexId(indexName, id),
+                 new Delete.Builder(id).index(indexName).type(label.name()+"Sync").build());
     	return reqs;
+    }
+
+    private Map<IndexId, Delete> deleteRequests(String sketchID) {
+        HashMap<IndexId, Delete> reqs = new HashMap<>();
+        reqs.put(new IndexId("testIndex", sketchID),
+                new Delete.Builder(sketchID).build());
+        return reqs;
+    }
+
+    private Map<IndexId, Delete> deleteRequests(Node node) {
+        System.out.println("Delete nodes");
+        System.out.println("--------------->" + node.toString());
+        System.out.println("--------------->" + node.getAllProperties());
+
+        HashMap<IndexId, Delete> reqs = new HashMap<>();
+        String id = id(node);
+        for (Label l: node.getLabels()) {
+            String indexName = l.name().toLowerCase();
+            reqs.put(new IndexId(indexName, id),
+                    new Delete.Builder(id).
+                            index(indexName)
+                            .type(indexName+"Sync")
+                            .build());
+        }
+        return reqs;
     }
     
     private Map<IndexId, Update> updateRequests(Node node) {
@@ -127,25 +159,17 @@ class ElasticSearchEventHandler implements TransactionEventHandler<Collection<Bu
     }
 
     private String id(Node node) {
-        try {
-            System.out.println("OOOOOOOOOOOOO-----------> " + "2.1");
-            String value = String.valueOf(node.getProperty("sketchID"));
-            System.out.println(value);
-            return value;
-        }catch (Exception e){
-            System.out.println("OOOOOOOOOOOOO-----------> " + "2.3");
-            e.printStackTrace();
-            return String.valueOf(node.getId());
-        }
+        System.out.println(node.getAllProperties());
+        Map json = nodeToJson(node);
+        System.out.println(json);
+        return String.valueOf(json.getOrDefault("sketchID", node.getId()));
     }
 
     private Map nodeToJson(Node node) {
         Map<String, Object> json = new LinkedHashMap<>();
-        
         for (Map.Entry<String, Object> entry : node.getAllProperties().entrySet()) {
             json.put(entry.getKey(), entry.getValue());
         }
-        
         return json;
     }
 
